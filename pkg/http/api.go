@@ -30,6 +30,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/valyala/fasthttp"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -990,8 +991,29 @@ func (a *api) onGetState(reqCtx *fasthttp.RequestCtx) {
 
 	if err != nil {
 		msg := NewErrorResponse("ERR_STATE_GET", fmt.Sprintf(messages.ErrStateGet, key, storeName, err.Error()))
-		respond(reqCtx, withError(fasthttp.StatusInternalServerError, msg))
 		log.Debug(msg)
+
+		var ste status.Status
+		if errStatus, ok := status.FromError(err); ok {
+			ste = *errStatus
+		} else {
+			var ei errdetails.ErrorInfo
+			ei.Domain = "http.runtime.dapr.io"
+			ei.Reason = "DPR_RT_HTTP_001"
+			ei.Metadata = map[string]string{
+				"storeName": storeName,
+				"key":       key,
+			}
+			errStatus, err1 := status.Newf(codes.Unavailable, fmt.Sprintf(messages.ErrStateGet, key, storeName, err.Error())).WithDetails(&ei)
+			if err1 != nil {
+				fmt.Printf("err: %v\n", err)
+				respond(reqCtx, withError(fasthttp.StatusInternalServerError, msg))
+			}
+			ste = *errStatus
+		}
+
+		respond(reqCtx, withStatusError(fasthttp.StatusInternalServerError, &ste))
+
 		return
 	}
 
@@ -1742,7 +1764,27 @@ func (a *api) onDirectMessage(reqCtx *fasthttp.RequestCtx) {
 
 	invokeErr := invokeError{}
 	if errors.As(err, &invokeErr) {
-		respond(reqCtx, withError(invokeErr.statusCode, invokeErr.msg))
+		ei := errdetails.ErrorInfo{
+			Domain: "http.runtime.dapr.io",
+			Reason: "DPR_RT_HTTP_2",
+			Metadata: map[string]string{
+				"MethodName": invokeMethodName,
+				"verb":       verb,
+				"AppID":      targetID,
+			},
+		}
+		ri := errdetails.RequestInfo{
+			RequestId:   fmt.Sprintf("%d", reqCtx.ID()),
+			ServingData: fmt.Sprintf("MethodName: %s, verb: %s, AppID: %s", invokeMethodName, verb, targetID),
+		}
+		ste, stErr := status.Newf(codes.NotFound, invokeErr.msg.Message).WithDetails(&ei, &ri)
+		if stErr != nil {
+			fmt.Printf("direct invoke was unable to generate Status Code Error: %v\n", stErr)
+			respond(reqCtx, withError(invokeErr.statusCode, invokeErr.msg))
+		} else {
+			respond(reqCtx, withStatusError(fasthttp.StatusInternalServerError, ste))
+		}
+
 		cancel()
 		if resp != nil {
 			_ = resp.Close()

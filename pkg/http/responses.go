@@ -14,11 +14,15 @@ limitations under the License.
 package http
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/valyala/fasthttp"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -96,6 +100,20 @@ func withJSON(code int, obj []byte) option {
 func withError(code int, resp ErrorResponse) option {
 	b, _ := json.Marshal(&resp)
 	return withJSON(code, b)
+}
+
+func withStatusError(code int, status *status.Status) option {
+	marshaler := jsonpb.Marshaler{
+		EmitDefaults: true,
+		OrigName:     true,
+	}
+	b := new(bytes.Buffer)
+	err := marshaler.Marshal(b, status.Proto())
+	if err != nil {
+		fmt.Printf("withStatusError failed to marshal status: %v\n", err)
+	}
+
+	return withJSON(code, b.Bytes())
 }
 
 // withEmpty sets 204 status code.

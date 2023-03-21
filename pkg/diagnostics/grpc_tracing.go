@@ -15,13 +15,13 @@ package diagnostics
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	grpcMetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -135,7 +135,9 @@ func GRPCTraceStreamServerInterceptor(appID string, spec config.TracingSpec) grp
 			md, _ := metadata.FromIncomingContext(ctx)
 			vals := md.Get(GRPCProxyAppIDKey)
 			if len(vals) == 0 {
-				return fmt.Errorf("cannot proxy request: missing %s metadata", GRPCProxyAppIDKey)
+				ste := status.Newf(codes.FailedPrecondition, "cannot proxy request: missing %s metadata", GRPCProxyAppIDKey)
+				return ste.Err()
+				//return fmt.Errorf("cannot proxy request: missing %s metadata", GRPCProxyAppIDKey)
 			}
 			// vals[0] is the target app ID
 			if appID == vals[0] {

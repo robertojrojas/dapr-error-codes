@@ -25,6 +25,7 @@ import (
 	"time"
 
 	otelTrace "go.opentelemetry.io/otel/trace"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -835,9 +836,33 @@ func (a *api) GetState(ctx context.Context, in *runtimev1pb.GetStateRequest) (*r
 	diag.DefaultComponentMonitoring.StateInvoked(ctx, in.StoreName, diag.Get, err == nil, elapsed)
 
 	if err != nil {
-		err = status.Errorf(codes.Internal, messages.ErrStateGet, in.Key, in.StoreName, err.Error())
 		apiServerLogger.Debug(err)
-		return &runtimev1pb.GetStateResponse{}, err
+
+		var errStatus status.Status
+		if ste, ok := status.FromError(err); ok {
+			errStatus = *ste
+		} else {
+			ste := status.Newf(codes.Internal, messages.ErrStateGet, in.Key, in.StoreName, err.Error())
+			ei := errdetails.ErrorInfo{
+				Domain: "grpc.runtime.dapr.io",
+				Reason: "DPR_RT_GRPC_1",
+				Metadata: map[string]string{
+					"key":       in.Key,
+					"storeName": in.StoreName,
+				},
+			}
+			ste, err2 := ste.WithDetails(&ei)
+			if err2 != nil {
+				reterr := status.Errorf(codes.Internal, messages.ErrStateGet, in.Key, in.StoreName, err.Error())
+				if reterr != nil {
+					return &runtimev1pb.GetStateResponse{}, reterr
+				}
+			}
+			errStatus = *ste
+		}
+		printErrorStatus(errStatus.Err())
+
+		return &runtimev1pb.GetStateResponse{}, errStatus.Err()
 	}
 
 	if getResponse == nil {
@@ -861,6 +886,28 @@ func (a *api) GetState(ctx context.Context, in *runtimev1pb.GetStateRequest) (*r
 		response.Metadata = getResponse.Metadata
 	}
 	return response, nil
+}
+
+func printErrorStatus(est error) {
+	errStatus := status.Convert(est)
+	if errStatus.Code() != codes.OK {
+		fmt.Printf("ERROR with details:\n  Code: %s(%d)\n  Message: %s\n", errStatus.Code().String(), errStatus.Code(), errStatus.Message())
+		for _, detail := range errStatus.Details() {
+			switch dt := detail.(type) {
+			case *errdetails.ErrorInfo:
+				edt := detail.(*errdetails.ErrorInfo)
+				fmt.Printf("Error Info:\n Reason: %s\n Domain: %s\n\n", edt.Reason, edt.Domain)
+				fmt.Printf(" Metadata: \n")
+				for k := range edt.Metadata {
+					fmt.Printf("\t %s ==> %s\n", k, edt.Metadata[k])
+				}
+			default:
+				fmt.Printf("errStatus detail is of type: %T %#v\n", dt, dt)
+			}
+		}
+	} else {
+		fmt.Printf("status code is OK\n")
+	}
 }
 
 func (a *api) SaveState(ctx context.Context, in *runtimev1pb.SaveStateRequest) (*emptypb.Empty, error) {
