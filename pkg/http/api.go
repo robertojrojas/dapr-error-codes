@@ -62,6 +62,8 @@ import (
 	"github.com/dapr/dapr/pkg/resiliency/breaker"
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/utils"
+	"github.com/dapr/kit/pkg/proto/customerrors/v1"
+	kitstatus "github.com/dapr/kit/status"
 )
 
 // API returns a list of HTTP endpoints for Dapr.
@@ -1773,11 +1775,21 @@ func (a *api) onDirectMessage(reqCtx *fasthttp.RequestCtx) {
 				"AppID":      targetID,
 			},
 		}
+		kei := customerrors.DaprKitErrorInfo{
+			Domain: "http.runtime.dapr.io",
+			Reason: "DPR_RT_HTTP_2",
+			Metadata: map[string]string{
+				"MethodName": invokeMethodName,
+				"verb":       verb,
+				"AppID":      targetID,
+			},
+		}
+
 		ri := errdetails.RequestInfo{
 			RequestId:   fmt.Sprintf("%d", reqCtx.ID()),
 			ServingData: fmt.Sprintf("MethodName: %s, verb: %s, AppID: %s", invokeMethodName, verb, targetID),
 		}
-		ste, stErr := status.Newf(codes.NotFound, invokeErr.msg.Message).WithDetails(&ei, &ri)
+		ste, stErr := status.Newf(kitstatus.METHOD_NOT_FOUND, invokeErr.msg.Message).WithDetails(&ei, &ri, &kei)
 		if stErr != nil {
 			fmt.Printf("direct invoke was unable to generate Status Code Error: %v\n", stErr)
 			respond(reqCtx, withError(invokeErr.statusCode, invokeErr.msg))
