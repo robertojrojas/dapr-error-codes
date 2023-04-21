@@ -1046,6 +1046,11 @@ func (a *api) QueryStateAlpha1(ctx context.Context, in *runtimev1pb.QueryStateRe
 
 // stateErrorResponse takes a state store error, format and args and returns a status code encoded gRPC error.
 func (a *api) stateErrorResponse(err error, format string, args ...interface{}) error {
+	// No need to continue further if already a gRPC Status error
+	if _, isStatusErr := status.FromError(err); isStatusErr {
+		return err
+	}
+
 	e, ok := err.(*state.ETagError)
 	if !ok {
 		return status.Errorf(codes.Internal, format, args...)

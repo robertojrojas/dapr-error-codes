@@ -2532,6 +2532,14 @@ func TestStateStoreErrors(t *testing.T) {
 
 		assert.Equal(t, "rpc error: code = Internal desc = failed deleting state with key a: error", err2.Error())
 	})
+
+	t.Run("gRPC Status error", func(t *testing.T) {
+		a := &api{}
+		err := status.Newf(codes.InvalidArgument, "gRPC Status error").Err()
+		err2 := a.stateErrorResponse(err, messages.ErrStateDelete, "a", err.Error())
+
+		assert.Equal(t, "rpc error: code = InvalidArgument desc = gRPC Status error", err2.Error())
+	})
 }
 
 func TestExtractEtag(t *testing.T) {
